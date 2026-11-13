@@ -1,0 +1,70 @@
+# Builds the StockLink Android APK (a Trusted Web Activity that opens your live StockLink website).
+# One-time setup in GitHub: Settings > Secrets and variables > Actions
+#   Variables tab > New repository variable:  APP_URL = https://your-stocklink-address  (no slash at the end)
+#   Secrets tab   > New repository secret:    ANDROID_KEYSTORE_B64      (from android-signing/keystore-base64.txt)
+#                                              ANDROID_KEYSTORE_PASSWORD (from android-signing/PASSWORD.txt)
+# Then: Actions > Build Android APK > Run workflow. Download "StockLink-apk" from the finished run.
+name: Build Android APK
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['android/**', '.github/workflows/android-apk.yml']
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check settings
+        env:
+          APP_URL: ${{ vars.APP_URL }}
+          KS: ${{ secrets.ANDROID_KEYSTORE_B64 }}
+          KP: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+        run: |
+          if [ -z "$APP_URL" ]; then echo "::error::Set the APP_URL repository variable (Settings > Secrets and variables > Actions > Variables)"; exit 1; fi
+          case "$APP_URL" in https://*) ;; *) echo "::error::APP_URL must start with https://"; exit 1;; esac
+          if [ -z "$KS" ] || [ -z "$KP" ]; then echo "::error::Add the ANDROID_KEYSTORE_B64 and ANDROID_KEYSTORE_PASSWORD secrets"; exit 1; fi
+
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: '17' }
+
+      # GitHub's Ubuntu machines already include the Android SDK, so no download step is needed
+      # (the old setup-android download step failed while fetching updates).
+      - name: Use the Android SDK already on the runner
+        run: |
+          SDK="${ANDROID_SDK_ROOT:-$ANDROID_HOME}"
+          if [ -z "$SDK" ] || [ ! -d "$SDK" ]; then echo "::error::No Android SDK found on this runner"; exit 1; fi
+          echo "ANDROID_HOME=$SDK" >> "$GITHUB_ENV"; echo "ANDROID_SDK_ROOT=$SDK" >> "$GITHUB_ENV"
+          echo "sdk.dir=$SDK" > android/local.properties
+          echo "Android SDK: $SDK"; ls "$SDK/platforms" || true
+
+      - uses: gradle/actions/setup-gradle@v4
+        with: { gradle-version: '8.9' }
+
+      - name: Restore signing key
+        env: { KS: '${{ secrets.ANDROID_KEYSTORE_B64 }}' }
+        run: echo "$KS" | base64 -d > "$RUNNER_TEMP/release.keystore"
+
+      - name: Build signed APK
+        working-directory: android
+        env:
+          APP_URL: ${{ vars.APP_URL }}
+          KEYSTORE_PATH: ${{ runner.temp }}/release.keystore
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+        run: gradle assembleRelease --no-daemon --stacktrace
+
+      - name: Check size (must stay under 20 MB)
+        run: |
+          APK=android/app/build/outputs/apk/release/app-release.apk
+          SIZE=$(stat -c%s "$APK"); echo "APK size: $((SIZE/1024)) KB"
+          [ "$SIZE" -lt 20971520 ] || { echo "::error::APK is over 20 MB"; exit 1; }
+          mkdir -p out && cp "$APK" out/StockLink.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: StockLink-apk
+          path: out/StockLink.apk
+          retention-days: 30
