@@ -127,3 +127,14 @@ export const track = (o) => {
 export const stLabel = (o) => t(o.status === 'dispatched' && o.fulfilment === 'pickup' ? 's_ready' : 's_' + o.status);
 export const stClass = (o) => (o.status === 'cancelled' || o.status === 'expired' ? 'bad' : o.status === 'completed' ? 'good' : 'acc');
 export const statusBadge = (o) => html`<span class="badge ${stClass(o)}">${stLabel(o)}</span>`;
+
+// Changes the seller proposed for an order (shown to both sides).
+export function proposalView(o) {
+  const p = o.proposal;
+  if (!p) return '';
+  return html`<div class="note prop"><h3>${t('prop_h')}</h3>
+    ${p.lines.map((l) => html`<div class="sub">${l.name}: ${l.old_qty} → <b>${l.qty}</b>${l.unit_price_paise !== l.old_price_paise ? html` · ${money(l.old_price_paise)} → <b>${money(l.unit_price_paise)}</b>` : ''}</div>`)}
+    <div class="row sp"><span class="sub">${t('prop_new_total')}</span><span class="price">${money(p.subtotal_paise)}</span></div>
+    ${p.note ? html`<p class="sub">“${p.note}”</p>` : ''}</div>`;
+}
+

@@ -4,7 +4,7 @@ import { t, money, ago } from '../core/format.js';
 import { api, toast, attempt, $ } from '../core/api.js';
 import { withBusy } from '../core/busy.js';
 import { shrink } from './images.js';
-import { field, btn, seg, hello, hero, quick, weekBars, photoCard, allClear, empty, loading, sectionHead, thumb, stockLine, track, statusBadge, icon, perUnit, sizesLine, qtyTotal } from '../ui/components.js';
+import { field, btn, seg, hello, hero, quick, weekBars, photoCard, allClear, empty, loading, sectionHead, thumb, stockLine, track, statusBadge, icon, perUnit, sizesLine, qtyTotal, proposalView } from '../ui/components.js';
 import { openModal } from '../ui/modals.js';
 import { alertCard } from './notes.js';
 import { planBanner } from './plans.js';
@@ -17,7 +17,7 @@ export async function loadWholesaler(tab) {
     S.d.rconns = (await api('GET', '/api/w/retailers')).connections;
     S.d.invites = (await api('GET', '/api/w/invites')).invites;
   }
-  if (tab === 'stock') S.d.products = (await api('GET', '/api/w/products')).products;
+  if (tab === 'stock') { S.d.products = (await api('GET', '/api/w/products')).products; S.d.rconns = (await api('GET', '/api/w/retailers')).connections; }
   if (tab === 'orders') S.d.orders = (await api('GET', '/api/w/orders')).orders;
   if (tab !== 'retailers') S.d.pending = (await api('GET', '/api/w/retailers')).connections.filter((x) => x.status === 'pending').length;
 }
@@ -103,8 +103,9 @@ function retailersView() {
 function connectedRow(c) {
   const ok = c.status === 'approved';
   return html`<div class="entry"><div class="item"><div class="grow"><div class="nm">${c.name}</div><div class="ls">${c.city}${c.phone ? ' · ' + c.phone : ''}</div></div>
-    <span class="badge ${ok ? 'good' : 'bad'}">${t('cs_' + c.status)}</span></div>
+    ${ok ? html`<span class="badge acc">${t('rate_x', { r: c.tier || 'A' })}</span>` : ''}<span class="badge ${ok ? 'good' : 'bad'}">${t('cs_' + c.status)}</span></div>
     <details class="more"><summary>${t('more')}</summary><div class="chips">
+      ${ok && can('catalog') ? html`<span class="sub">${t('rate_pick')}</span>${['A', 'B', 'C'].map((r) => btn(t('rate_x', { r }), 'conn', c.id + ':tier:' + r, (c.tier || 'A') === r ? 'pri sm' : 'sm', { 'aria-pressed': (c.tier || 'A') === r ? 'true' : 'false' }))}` : ''}
       ${ok ? html`${btn(t(c.credit_allowed ? 'credit_off' : 'credit_on'), 'conn', c.id + ':credit:' + (c.credit_allowed ? 0 : 1), 'sm')}${btn(t('revoke'), 'conn', c.id + ':revoke', 'danger sm')}` : ''}
       ${c.status === 'revoked' || c.status === 'rejected' ? btn(t('approve'), 'conn', c.id + ':approve', 'pri sm') : ''}
       ${c.status !== 'blocked' ? btn(t('block'), 'conn', c.id + ':block', 'danger sm') : ''}</div></details></div>`;
@@ -126,11 +127,27 @@ function stockRow(p) {
       <div class="chips">${btn(t(p.status === 'paused' ? 'resume' : 'pause'), 'pst', p.id + ':' + (p.status === 'paused' ? 'active' : 'paused'), 'sm')}${btn(t('markv'), 'markv', p.id, 'sm')}${btn(t('add_more_photos'), 'addphoto', p.id, 'sm')}${btn(t('archive'), 'pst', p.id + ':archived', 'danger sm')}</div>
       <div class="row wrap">${field('set_' + p.id, t('set_count'), { type: 'number', min: 0 })}${field('price_' + p.id, t('set_price'), { type: 'number', min: 0, step: '0.01' })}</div>
       <div class="chips">${btn(t('set_count_btn'), 'setstock', p.id, 'sm')}${btn(t('set_price_btn'), 'setprice', p.id, 'sm')}</div>
+      <h4 class="mini">${t('rates_h')}</h4><p class="sub">${t('rates_d', { a: money(p.price_paise) })}</p>
+      <div class="row wrap">${field('pb_' + p.id, t('rate_x', { r: 'B' }) + ' (₹)', { type: 'number', min: 0, step: '0.01', placeholder: p.price_b_paise ? String(p.price_b_paise / 100) : '–' })}${field('pc2_' + p.id, t('rate_x', { r: 'C' }) + ' (₹)', { type: 'number', min: 0, step: '0.01', placeholder: p.price_c_paise ? String(p.price_c_paise / 100) : '–' })}</div>
+      <div class="chips">${btn(t('rates_save'), 'setrates', p.id, 'sm')}${p.price_b_paise || p.price_c_paise ? btn(t('rates_clear'), 'clrrates', p.id, 'ghost sm') : ''}</div>
+      ${specialBox(p)}
       <div class="row wrap">${field('cat_' + p.id, t('add_cat'), { maxlength: 30, placeholder: p.category || t('cat_ph') })}</div>
       <div class="chips">${btn(t('set_cat_btn'), 'setcat', p.id, 'sm')}</div></details></div>`;
 }
 
+// One retailer, one product, one price (beats their rate). Empty price removes it.
+function specialBox(p) {
+  const rs = (S.d.rconns || []).filter((c) => c.status === 'approved');
+  if (!rs.length) return '';
+  const cur = S.form['spr_' + p.id] || '';
+  return html`<h4 class="mini">${t('sp_h')}</h4>
+    <div class="row wrap"><div class="field"><label for="spr_${p.id}">${t('sp_who')}</label><select id="spr_${p.id}" data-f="spr_${p.id}"><option value="">–</option>${rs.map((c) => html`<option value="${c.retailer_shop_id}" ${String(c.retailer_shop_id) === cur ? 'selected' : ''}>${c.name}</option>`)}</select></div>
+    ${field('spp_' + p.id, t('sp_price'), { type: 'number', min: 0, step: '0.01', placeholder: t('sp_ph') })}</div>
+    <div class="chips">${btn(t('sp_save'), 'setspecial', p.id, 'sm')}</div>`;
+}
+
 function nextStep(o) {
+  if (o.proposal) return html`<span class="badge warn">${t('prop_wait')}</span>`;
   if (o.status === 'received') {
     if (o.payment_mode === 'upi' && !o.utr) return html`<span class="sub">${t('wait_utr')}</span>`;
     return btn(t(o.payment_mode === 'upi' ? 'nx_upi' : o.payment_mode === 'credit' ? 'nx_credit' : 'nx_cod'), 'adv', o.id, 'pri sm');
@@ -161,8 +178,17 @@ function orderCard(o) {
     ${track(o)}
     <div class="row sp"><span class="sub">${t(o.fulfilment === 'home' ? 'home' : 'pickup')} · ${t(o.payment_mode === 'cod' && o.fulfilment === 'pickup' ? 'pm_cash_pickup' : 'pm_' + o.payment_mode)}</span><span class="price">${money(o.subtotal_paise)}</span></div>
     ${o.address ? html`<div class="sub">${o.address}</div>` : ''}
+    ${proposalView(o)}${o.status === 'received' && !o.proposal && can('orders') ? proposeEditor(o) : ''}
     ${o.utr ? html`<div class="sub">${t('utr')}: <span class="mono">${o.utr}</span>${o.has_proof ? html` · <a href="/api/orders/${o.id}/proof" target="_blank" rel="noopener">${t('view_proof')}</a>` : ''}</div>` : ''}
     <div class="row wrap">${nextStep(o)}${btn(t('msg_btn'), 'chatorder', o.retailer_shop_id + ':' + o.id, 'ghost sm')}${canCancel ? btn(t('cancel_order'), 'wcancel', o.id, 'ghost danger sm') : ''}</div></div>`;
+}
+
+function proposeEditor(o) {
+  if (!S.open['prop_' + o.id]) return html`<div class="chips">${btn(t('prop_open'), 'propopen', o.id, 'ghost sm')}</div>`;
+  return html`<div class="note"><h3>${t('prop_open')}</h3><p class="sub">${t('prop_d')}</p>
+    ${o.items.map((i) => html`<div class="sub"><b>${i.name}</b></div><div class="row wrap">${field('pq_' + o.id + '_' + i.product_id, t('item_qty'), { type: 'number', min: 0, placeholder: String(i.qty) })}${field('pp_' + o.id + '_' + i.product_id, t('sp_price'), { type: 'number', min: 0, step: '0.01', placeholder: String(i.unit_price_paise / 100) })}</div>`)}
+    ${field('pn_' + o.id, t('prop_note'), { maxlength: 300 })}
+    <div class="chips">${btn(t('prop_send'), 'propsend', o.id, 'pri sm')}${btn(t('btn_close'), 'propopen', o.id, 'ghost sm')}</div></div>`;
 }
 
 /* ---------- actions ---------- */
@@ -183,7 +209,8 @@ export const wholesalerActions = {
   saveupi: async () => { if (await post('/api/w/profile', { upi_id: S.form.upi_id || '' })) { S.form.upi_id = ''; toast(t('saved'), 'ok'); await reload(); } },
   conn: async (id) => {
     const [cid, action, v] = id.split(':');
-    if (await post('/api/w/connections/' + cid, action === 'credit' ? { action, allowed: v === '1' } : { action })) await reload();
+    const body = action === 'credit' ? { action, allowed: v === '1' } : action === 'tier' ? { action, tier: v } : { action };
+    if (await post('/api/w/connections/' + cid, body)) { if (action === 'tier') toast(t('saved'), 'ok'); await reload(); }
   },
   newinvite: async () => {
     const r = await post('/api/w/invites', { days: +(S.form.idays || 7), auto_approve: $('#iauto') ? $('#iauto').checked : false });
@@ -204,6 +231,35 @@ export const wholesalerActions = {
   },
   setprice: async (id) => {
     if (await post('/api/w/products/' + id + '/update', { price: Number(S.form['price_' + id]) })) { delete S.form['price_' + id]; toast(t('saved'), 'ok'); await reload(); }
+  },
+  setrates: async (id) => {
+    const b = {}, vb = S.form['pb_' + id], vc = S.form['pc2_' + id];
+    if (vb !== undefined && vb !== '') b.price_b = Number(vb);
+    if (vc !== undefined && vc !== '') b.price_c = Number(vc);
+    if (!Object.keys(b).length) return toast(t('need'), 'warn');
+    if (await post('/api/w/products/' + id + '/update', b)) { delete S.form['pb_' + id]; delete S.form['pc2_' + id]; toast(t('saved'), 'ok'); await reload(); }
+  },
+  clrrates: async (id) => { if (await post('/api/w/products/' + id + '/update', { price_b: null, price_c: null })) { toast(t('saved'), 'ok'); await reload(); } },
+  setspecial: async (id) => {
+    const rid = Number(S.form['spr_' + id]), v = S.form['spp_' + id];
+    if (!rid) return toast(t('sp_need'), 'warn');
+    if (await post('/api/w/products/' + id + '/buyer-price', { retailer_shop_id: rid, price: v === undefined || v === '' ? null : Number(v) })) {
+      toast(t(v === undefined || v === '' ? 'sp_removed' : 'saved'), 'ok'); delete S.form['spp_' + id];
+    }
+  },
+  propopen: (id) => { S.open['prop_' + id] = !S.open['prop_' + id]; app.render(); },
+  propsend: async (id) => {
+    const o = (S.d.orders || []).find((x) => String(x.id) === String(id));
+    if (!o) return;
+    const num = (k) => (S.form[k] === undefined || S.form[k] === '' ? undefined : Number(S.form[k]));
+    const lines = o.items.map((i) => {
+      const qn = num('pq_' + id + '_' + i.product_id), pr = num('pp_' + id + '_' + i.product_id);
+      return { product_id: i.product_id, qty: qn === undefined ? i.qty : qn, ...(pr === undefined ? {} : { price: pr }) };
+    });
+    if (await post('/api/w/orders/' + id + '/propose', { lines, note: S.form['pn_' + id] || undefined })) {
+      for (const k of Object.keys(S.form)) if (k.startsWith('pq_' + id + '_') || k.startsWith('pp_' + id + '_') || k === 'pn_' + id) delete S.form[k];
+      S.open['prop_' + id] = false; toast(t('prop_sent'), 'ok'); await reload();
+    }
   },
   pst: async (id) => { const [pid, st] = id.split(':'); if (await post('/api/w/products/' + pid + '/status', { status: st })) await reload(); },
   markv: async (id) => { if (await post('/api/w/products/' + id + '/verify', {})) await reload(); },

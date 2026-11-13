@@ -5,7 +5,7 @@ import { api, toast, errText, attempt } from '../core/api.js';
 import { withBusy } from '../core/busy.js';
 import { shrink } from './images.js';
 import { alertCard } from './notes.js';
-import { field, btn, seg, chips, hello, hero, quick, photoCard, allClear, empty, loading, sectionHead, thumb, stockLine, track, statusBadge, yn, icon, perUnit, sizesLine, qtyTotal } from '../ui/components.js';
+import { field, btn, seg, chips, hello, hero, quick, photoCard, allClear, empty, loading, sectionHead, thumb, stockLine, track, statusBadge, yn, icon, perUnit, sizesLine, qtyTotal, proposalView } from '../ui/components.js';
 
 /* ---------- data ---------- */
 const approvedConns = () => (S.d.conns || []).filter((x) => x.status === 'approved' && x.verification === 'approved');
@@ -214,7 +214,7 @@ function productRow(p) {
     <button class="thumbbtn" data-act="gal" data-id="${p.id}" aria-label="${t('photos')}" ${hasPhoto ? '' : 'disabled'}>${thumb(p)}</button>
     <div class="grow"><div class="nm">${p.name}${p.is_new ? html` <span class="badge acc">${t('newtag')}</span>` : ''}</div>
       ${p.spec ? html`<div class="ls">${p.spec}</div>` : ''}
-      <div class="ls"><b class="price">${money(p.price_paise)}</b> / ${perUnit(p)}${p.moq > 1 ? ' · ' + t('moq', { n: p.moq }) : ''}</div>
+      <div class="ls"><b class="price">${money(p.price_paise)}</b>${p.rate === 'special' ? html` <span class="badge acc">${t('your_price')}</span>` : ''} / ${perUnit(p)}${p.moq > 1 ? ' · ' + t('moq', { n: p.moq }) : ''}</div>
       ${p.pack_detail.length ? html`<div class="ls sizes">${sizesLine(p.pack_detail)}</div>` : ''}
       <div class="ls">${stockLine(p)}</div></div>
     <div class="act">${action}${can && q > 0 && p.pack_qty > 1 ? html`<div class="ls center">${qtyTotal(p, q)}</div>` : ''}</div></div>`;
@@ -263,6 +263,7 @@ function orderCard(o) {
       <div class="row wrap"><label class="btn sm" for="proof_${o.id}">${t(S.form['proof_' + o.id] ? 'proof_ok' : 'proof_add')}</label><input class="vh" type="file" accept="image/*" id="proof_${o.id}" data-proof="${o.id}">${btn(t('submit_pay'), 'paysubmit', o.id, 'pri sm')}</div></div>` : ''}
     ${o.utr ? html`<div class="sub">${t('utr')}: <span class="mono">${o.utr}</span> · ${t(o.status === 'received' ? 'verify_wait' : 'verified')}</div>` : ''}
     ${o.cancel_reason && !live ? html`<div class="sub">${o.cancel_reason}</div>` : ''}
+    ${o.proposal ? html`${proposalView(o)}<p class="sub">${t('prop_ask')}</p><div class="row wrap">${btn(t('prop_accept'), 'propdec', o.id + ':accept', 'pri sm')}${btn(t('prop_decline'), 'propdec', o.id + ':decline', 'ghost danger sm')}</div>` : ''}
     <div class="row wrap">${btn(t('msg_btn'), 'chatorder', o.wholesaler_shop_id + ':' + o.id, 'ghost sm')}${o.status === 'received' ? btn(t('cancel_order'), 'rcancel', o.id, 'ghost danger sm') : ''}</div></div>`;
 }
 
@@ -347,6 +348,10 @@ export const retailerActions = {
       if (e.message === 'insufficient_stock') { S.checkout = null; await app.load(true); }
     }
   }),
+  propdec: async (id) => {
+    const [oid, decision] = id.split(':');
+    if (await attempt(() => api('POST', '/api/r/orders/' + oid + '/proposal', { decision }))) { toast(t(decision === 'accept' ? 'prop_accepted' : 'prop_declined'), decision === 'accept' ? 'ok' : 'bad'); await app.load(true); }
+  },
   rcancel: async (id) => { if (await attempt(() => api('POST', '/api/r/orders/' + id + '/cancel', {}))) { toast(t('cancelled'), 'bad'); await app.load(true); } },
   paysubmit: async (id) => {
     const ok = await attempt(() => api('POST', '/api/r/orders/' + id + '/payment', { utr: S.form['utr_' + id] || '', proof: S.form['proof_' + id] || undefined }));

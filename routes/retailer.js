@@ -5,7 +5,7 @@ const { tx, audit } = require('../lib/db');
 const { fail } = require('../lib/auth');
 
 module.exports = function registerRetailer(ctx, route) {
-  const { plans, db, q, cancelOrder, now, secret, isUnique, connApproved, emit, productOut, orderOut, emitStockFor, DAY, notify } = ctx;
+  const { buyerPricing, plans, db, q, cancelOrder, now, secret, isUnique, connApproved, emit, productOut, orderOut, emitStockFor, DAY, notify } = ctx;
   /* ----- retailer ----- */
   route('GET', '/api/shops/search', 'retailer', async (c) => {
     const term = String(c.query.get('q') || '').trim().slice(0, 40).replace(/[\\%_]/g, m => '\\' + m);
@@ -84,7 +84,9 @@ module.exports = function registerRetailer(ctx, route) {
     // Blueprint 6.4: an expired or suspended supplier closes only its own catalogue; other suppliers are unaffected.
     if (!(await plans.access(wid)).can_sell) fail(403, 'supplier_inactive');
     const shop = (await q('SELECT id,name,city,upi_id,allow_cash,allow_home FROM shops WHERE id=?').get(wid));
-    return { shop, products: await Promise.all((await q(`SELECT * FROM products WHERE shop_id=? AND status IN ('active','paused') ORDER BY is_new DESC, id DESC`).all(wid)).map(p => productOut(p, false))) };
+    // Each buyer sees only their own price (special, else their tier, else list). Other tiers are never sent.
+    const bp = await buyerPricing(wid, c.shop.id);
+    return { shop, tier: bp.tier, products: await Promise.all((await q(`SELECT * FROM products WHERE shop_id=? AND status IN ('active','paused') ORDER BY is_new DESC, id DESC`).all(wid)).map(async (p) => ({ ...(await productOut(p, false)), price_paise: bp.priceOf(p), rate: bp.rateOf(p) }))) };
   });
   route('POST', '/api/r/orders', 'retailer', async (c) => {
     if (!A.hit('order:' + c.user.id, 30, 60000)) fail(429, 'rate_limited');
@@ -113,20 +115,20 @@ module.exports = function registerRetailer(ctx, route) {
       if (mode === 'cod' && !cn.allow_cash) fail(403, 'cash_not_allowed');
       if (fulfilment === 'home' && !cn.allow_home) fail(403, 'delivery_not_allowed');
       if ((await q(`SELECT COUNT(*) n FROM orders WHERE retailer_shop_id=? AND wholesaler_shop_id=? AND status='received'`).get(c.shop.id, wid)).n >= 5) fail(429, 'too_many_open_orders');
-      let subtotal = 0; const lines = [];
+      let subtotal = 0; const lines = []; const bp = await buyerPricing(wid, c.shop.id);
       for (const it of items) {
         const p = (await q(`SELECT * FROM products WHERE id=? AND shop_id=? AND status='active'`).get(it.pid, wid));
         if (!p) fail(404, 'product_unavailable', { product_id: it.pid });
         if (it.qty < p.moq) fail(400, 'below_moq', { product_id: it.pid, moq: p.moq });
         const r = (await q(`UPDATE products SET reserved=reserved+? WHERE id=? AND shop_id=? AND status='active' AND on_hand-reserved>=?`).run(it.qty, it.pid, wid, it.qty));
         if (r.changes !== 1) fail(409, 'insufficient_stock', { product_id: it.pid, available: Math.max(0, p.on_hand - p.reserved) });
-        subtotal += p.price_paise * it.qty; lines.push({ p, qty: it.qty });
+        const price = bp.priceOf(p); subtotal += price * it.qty; lines.push({ p, qty: it.qty, price });
       }
       const oid = Number((await q('INSERT INTO orders(no,wholesaler_shop_id,retailer_shop_id,placed_by,status,fulfilment,address,pickup_code,payment_mode,subtotal_paise,idem_key,reserve_expires_at,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
         .run('PENDING', wid, c.shop.id, c.user.id, 'received', fulfilment, address, A.makeCode().slice(0, 6), mode, subtotal, idem, mode === 'credit' ? null : now() + DAY, now(), now())).lastInsertRowid);
       const no = 'SL-' + String(1000 + oid);
       await q('UPDATE orders SET no=? WHERE id=?').run(no, oid);
-      for (const l of lines) (await q('INSERT INTO order_items(order_id,product_id,name_snapshot,unit,pack_qty,pack_detail,unit_price_paise,qty) VALUES(?,?,?,?,?,?,?,?)').run(oid, l.p.id, l.p.name, l.p.unit, l.p.pack_qty || 1, l.p.pack_detail || '', l.p.price_paise, l.qty));
+      for (const l of lines) (await q('INSERT INTO order_items(order_id,product_id,name_snapshot,unit,pack_qty,pack_detail,unit_price_paise,qty) VALUES(?,?,?,?,?,?,?,?)').run(oid, l.p.id, l.p.name, l.p.unit, l.p.pack_qty || 1, l.p.pack_detail || '', l.price, l.qty));
       await q('INSERT INTO order_history(order_id,status,actor_user_id,note,ts) VALUES(?,?,?,?,?)').run(oid, 'received', c.user.id, null, now());
       await audit(db, { actorId: c.user.id, actorLabel: c.user.name, action: 'order_placed', entity: 'order', entityId: oid, detail: `${no} total ${subtotal} items ${lines.length}`, ip: c.ip });
       return { order: (await q('SELECT * FROM orders WHERE id=?').get(oid)) };
@@ -145,6 +147,46 @@ module.exports = function registerRetailer(ctx, route) {
     const o = (await q('SELECT * FROM orders WHERE id=? AND retailer_shop_id=?').get(Number(c.params.id), c.shop.id)); if (!o) fail(404, 'not_found');
     const r = await cancelOrder(c, o, 'retailer', A.str(c.body.reason || 'Cancelled by retailer', 'reason', 3, 200));
     notify.shop(r.wholesaler_shop_id, 'order_cancelled_r', { no: r.no, shop: c.shop.name }, 'orders');
+    return await orderOut(r, 'retailer');
+  }, { perm: 'buy' });
+  // Buyer answers the seller's proposed changes. Accept: quantities and prices change, held stock is adjusted.
+  // Decline: the order is cancelled and its held stock released.
+  route('POST', '/api/r/orders/:id/proposal', 'retailer', async (c) => {
+    const decision = A.oneOf(c.body.decision, 'decision', ['accept', 'decline']);
+    const o = await q('SELECT * FROM orders WHERE id=? AND retailer_shop_id=?').get(Number(c.params.id), c.shop.id); if (!o) fail(404, 'not_found');
+    const pr0 = await q("SELECT id FROM order_proposals WHERE order_id=? AND status='pending'").get(o.id); if (!pr0) fail(409, 'no_proposal');
+    if (decision === 'decline') {
+      await q("UPDATE order_proposals SET status='declined', decided_by=?, decided_at=? WHERE id=? AND status='pending'").run(c.user.id, now(), pr0.id);
+      const r = await cancelOrder(c, o, 'retailer', 'Buyer declined proposed changes');
+      notify.shop(r.wholesaler_shop_id, 'proposal_declined', { no: r.no, shop: c.shop.name }, 'orders');
+      return await orderOut(r, 'retailer');
+    }
+    const r = await tx(db, async () => {
+      const cur = await q('SELECT * FROM orders WHERE id=? FOR UPDATE').get(o.id);
+      if (cur.status !== 'received') fail(409, 'bad_state');
+      const pr = await q("SELECT * FROM order_proposals WHERE id=? AND status='pending'").get(pr0.id); if (!pr) fail(409, 'no_proposal');
+      for (const l of JSON.parse(pr.lines)) {
+        const it = await q('SELECT id, qty FROM order_items WHERE order_id=? AND product_id=?').get(cur.id, l.product_id); if (!it) continue;
+        const d = l.qty - Number(it.qty);
+        if (d > 0) {
+          const u = await q('UPDATE products SET reserved=reserved+? WHERE id=? AND on_hand-reserved>=?').run(d, l.product_id, d);
+          if (u.changes !== 1) fail(409, 'insufficient_stock', { product_id: l.product_id });
+        } else if (d < 0) {
+          const u = await q('UPDATE products SET reserved=reserved-? WHERE id=? AND reserved>=?').run(-d, l.product_id, -d);
+          if (u.changes !== 1) throw new Error('reservation_mismatch');
+        }
+        if (l.qty === 0) await q('DELETE FROM order_items WHERE id=?').run(it.id);
+        else await q('UPDATE order_items SET qty=?, unit_price_paise=? WHERE id=?').run(l.qty, l.unit_price_paise, it.id);
+      }
+      const sum = (await q('SELECT qty, unit_price_paise FROM order_items WHERE order_id=?').all(cur.id)).reduce((a, x) => a + Number(x.qty) * Number(x.unit_price_paise), 0);
+      await q('UPDATE orders SET subtotal_paise=?, updated_at=? WHERE id=?').run(sum, now(), cur.id);
+      await q("UPDATE order_proposals SET status='accepted', decided_by=?, decided_at=? WHERE id=?").run(c.user.id, now(), pr.id);
+      await q('INSERT INTO order_history(order_id,status,actor_user_id,note,ts) VALUES(?,?,?,?,?)').run(cur.id, 'received', c.user.id, 'changes accepted', now());
+      await audit(db, { actorId: c.user.id, actorLabel: c.user.name, action: 'order_changes_accepted', entity: 'order', entityId: cur.id, detail: cur.no + ' total ' + sum, ip: c.ip });
+      return await q('SELECT * FROM orders WHERE id=?').get(cur.id);
+    });
+    await emitStockFor(r.id); emit({ kind: 'order', wid: r.wholesaler_shop_id, rid: r.retailer_shop_id, data: { order_id: r.id } });
+    notify.shop(r.wholesaler_shop_id, 'proposal_accepted', { no: r.no, shop: c.shop.name, total: notify.money(r.subtotal_paise) }, 'orders');
     return await orderOut(r, 'retailer');
   }, { perm: 'buy' });
   route('POST', '/api/r/orders/:id/payment', 'retailer', async (c) => {

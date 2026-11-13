@@ -222,6 +222,75 @@ const sec = (n) => console.log('\n' + n);
     A.resetLimits();
   }
 
+  sec('0g. Rates per buyer, proposed changes and the stock ledger (M4)');
+  {
+    A.resetLimits();
+    const q = app.db.q;
+    const RID = (await q("SELECT s.id FROM shops s JOIN users u ON u.id=s.owner_id WHERE u.phone='9000000004' ORDER BY s.id LIMIT 1").get()).id;
+    const other = await q("SELECT c.retailer_shop_id rid, u.phone FROM connections c JOIN shops s ON s.id=c.retailer_shop_id JOIN users u ON u.id=s.owner_id WHERE c.wholesaler_shop_id=? AND c.status='approved' AND c.retailer_shop_id<>? ORDER BY c.id LIMIT 1").get(WID, RID);
+    const p = await q("SELECT * FROM products WHERE shop_id=? AND status='active' AND on_hand-reserved>=moq*3 ORDER BY id LIMIT 1").get(WID);
+    const cn = await q('SELECT id FROM connections WHERE wholesaler_shop_id=? AND retailer_shop_id=?').get(WID, RID);
+    const list = Number(p.price_paise), rateB = Math.max(100, list - 500);
+    ok((await call('POST', '/api/w/products/' + p.id + '/update', { jar: sharma, body: { price_b: rateB / 100 } })).s === 200, 'wholesaler sets a Rate B price');
+    const set = await call('POST', '/api/w/connections/' + cn.id, { jar: sharma, body: { action: 'tier', tier: 'B' } });
+    ok(set.s === 200, 'wholesaler puts a retailer on Rate B');
+    ok((await call('POST', '/api/w/connections/' + cn.id, { jar: sharma, body: { action: 'tier', tier: 'Z' } })).s === 400, 'unknown rate is refused');
+    const catB = (await call('GET', '/api/r/catalog/' + WID, { jar: rahul })).j;
+    const seenB = catB.products.find((x) => x.id === p.id);
+    ok(catB.tier === 'B' && seenB.price_paise === rateB && seenB.rate === 'B', 'Rate B retailer sees the Rate B price');
+    ok(!JSON.stringify(catB).includes('price_b_paise') && !JSON.stringify(catB).includes('price_c_paise'), 'other rates are never sent to a retailer');
+    if (other) {
+      const oj = await login(other.phone);
+      const seenA = (await call('GET', '/api/r/catalog/' + WID, { jar: oj })).j.products.find((x) => x.id === p.id);
+      ok(seenA.price_paise === list && seenA.rate === 'A', 'a Rate A retailer of the same shop still sees the list price');
+    }
+    const special = Math.max(100, rateB - 300);
+    ok((await call('POST', '/api/w/products/' + p.id + '/buyer-price', { jar: sharma, body: { retailer_shop_id: 999999, price: 1 } })).j.error === 'not_connected', 'special price only for a connected retailer');
+    ok((await call('POST', '/api/w/products/' + p.id + '/buyer-price', { jar: patel, body: { retailer_shop_id: RID, price: 1 } })).s === 404, 'another wholesaler cannot price this product');
+    ok((await call('POST', '/api/w/products/' + p.id + '/buyer-price', { jar: sharma, body: { retailer_shop_id: RID, price: special / 100 } })).s === 200, 'wholesaler sets a special price for one retailer');
+    const seenS = (await call('GET', '/api/r/catalog/' + WID, { jar: rahul })).j.products.find((x) => x.id === p.id);
+    ok(seenS.price_paise === special && seenS.rate === 'special', 'special price wins over the rate');
+    ok((await call('GET', '/api/w/products/' + p.id + '/buyer-prices', { jar: sharma })).j.prices.some((x) => x.retailer_shop_id === RID), 'wholesaler can list special prices');
+    // order snapshot uses the buyer's price
+    const mk = async (qty, k) => call('POST', '/api/r/orders', { jar: rahul, body: { shop_id: WID, items: [{ product_id: p.id, qty }], fulfilment: 'pickup', payment_mode: 'upi', idem_key: k + Date.now() } });
+    const o1 = await mk(p.moq, 'm4a-');
+    ok(o1.s === 200 && o1.j.items[0].unit_price_paise === special && o1.j.subtotal_paise === special * p.moq, 'order saves the buyer\'s own price');
+    await call('POST', '/api/w/products/' + p.id + '/buyer-price', { jar: sharma, body: { retailer_shop_id: RID, price: null } });
+    ok((await call('POST', '/api/w/products/' + p.id + '/update', { jar: sharma, body: { price: (list + 1000) / 100 } })).s === 200, 'list price changed after the order');
+    ok((await call('GET', '/api/r/orders', { jar: rahul })).j.orders.find((o) => o.id === o1.j.id).items[0].unit_price_paise === special, 'later price changes do not touch placed orders');
+    await call('POST', '/api/w/products/' + p.id + '/update', { jar: sharma, body: { price: list / 100, price_b: null } });
+    await call('POST', '/api/w/connections/' + cn.id, { jar: sharma, body: { action: 'tier', tier: 'A' } });
+    // proposed changes
+    const before = await q('SELECT reserved FROM products WHERE id=?').get(p.id);
+    const newQty = p.moq * 2, newPrice = special + 200;
+    ok((await call('POST', '/api/w/orders/' + o1.j.id + '/propose', { jar: sharma, body: { lines: [{ product_id: p.id, qty: p.moq }] } })).j.error === 'nothing_changed', 'a proposal must change something');
+    ok((await call('POST', '/api/w/orders/' + o1.j.id + '/propose', { jar: patel, body: { lines: [{ product_id: p.id, qty: 1 }] } })).s === 404, 'another wholesaler cannot propose changes');
+    const prop = await call('POST', '/api/w/orders/' + o1.j.id + '/propose', { jar: sharma, body: { lines: [{ product_id: p.id, qty: newQty, price: newPrice / 100 }], note: 'Rate badla' } });
+    ok(prop.s === 200 && prop.j.proposal && prop.j.proposal.subtotal_paise === newQty * newPrice, 'wholesaler proposes new quantity and price');
+    ok((await call('POST', '/api/w/orders/' + o1.j.id + '/propose', { jar: sharma, body: { lines: [{ product_id: p.id, qty: 1 }] } })).j.error === 'awaiting_buyer', 'only one open proposal at a time');
+    ok((await call('POST', '/api/w/orders/' + o1.j.id + '/advance', { jar: sharma, body: {} })).j.error === 'awaiting_buyer', 'order cannot move on while the buyer has not answered');
+    ok((await call('GET', '/api/r/orders', { jar: rahul })).j.orders.find((o) => o.id === o1.j.id).proposal.lines[0].old_qty === p.moq, 'buyer sees old and new values');
+    const acc = await call('POST', '/api/r/orders/' + o1.j.id + '/proposal', { jar: rahul, body: { decision: 'accept' } });
+    ok(acc.s === 200 && acc.j.subtotal_paise === newQty * newPrice && acc.j.items[0].qty === newQty && !acc.j.proposal, 'buyer accepts: order total and lines change');
+    ok(Number((await q('SELECT reserved FROM products WHERE id=?').get(p.id)).reserved) === Number(before.reserved) + (newQty - p.moq), 'held stock follows the new quantity');
+    ok((await call('POST', '/api/r/orders/' + o1.j.id + '/proposal', { jar: rahul, body: { decision: 'accept' } })).j.error === 'no_proposal', 'a proposal cannot be accepted twice');
+    const o2 = await mk(p.moq, 'm4b-');
+    await call('POST', '/api/w/orders/' + o2.j.id + '/propose', { jar: sharma, body: { lines: [{ product_id: p.id, qty: p.moq, price: 1 }] } });
+    const r0 = Number((await q('SELECT reserved FROM products WHERE id=?').get(p.id)).reserved);
+    const dec = await call('POST', '/api/r/orders/' + o2.j.id + '/proposal', { jar: rahul, body: { decision: 'decline' } });
+    ok(dec.s === 200 && dec.j.status === 'cancelled' && Number((await q('SELECT reserved FROM products WHERE id=?').get(p.id)).reserved) === r0 - p.moq, 'buyer declines: order cancelled and stock released');
+    await call('POST', '/api/w/orders/' + o1.j.id + '/cancel', { jar: sharma, body: { reason: 'Test tidy up' } });
+    // stock ledger: every change is a movement; on hand equals the sum of movements
+    const s0 = Number((await q('SELECT on_hand FROM products WHERE id=?').get(p.id)).on_hand);
+    ok((await call('POST', '/api/w/products/' + p.id + '/stock', { jar: sharma, body: { set: s0 + 7, reason: 'Recount' } })).s === 200, 'stock set by the wholesaler');
+    const mv = await q('SELECT delta, reason FROM stock_movements WHERE product_id=? ORDER BY id DESC LIMIT 1').get(p.id);
+    ok(Number(mv.delta) === 7, 'stock change is written to the ledger');
+    const bad = await q('SELECT p.id, p.on_hand, COALESCE(SUM(m.delta),0) s FROM products p LEFT JOIN stock_movements m ON m.product_id=p.id GROUP BY p.id, p.on_hand HAVING p.on_hand <> COALESCE(SUM(m.delta),0)').all();
+    ok(bad.length === 0, 'on hand equals the sum of stock movements for every product' + (bad.length ? ' ' + JSON.stringify(bad.slice(0, 3)) : ''));
+    await call('POST', '/api/w/products/' + p.id + '/stock', { jar: sharma, body: { set: s0 } });
+    A.resetLimits();
+  }
+
   sec('0. Chat and payment options');
   {
     const RID = (await app.db.q("SELECT s.id FROM shops s JOIN users u ON u.id=s.owner_id WHERE u.phone='9000000004'").get()).id;

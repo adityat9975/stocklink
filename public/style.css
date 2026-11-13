@@ -141,7 +141,7 @@ details.card.more > :not(summary) { margin-left: 0; margin-right: 0; }
 .pweye { position: absolute; right: 4px; top: 50%; transform: translateY(-50%); width: 44px; height: 44px; display: grid; place-items: center; border: 0; border-radius: 10px; background: none; color: var(--muted); }
 .pweye:hover, .pweye[aria-pressed=true] { color: var(--accent-text); background: var(--accent-soft); }
 .pweye svg { width: 22px; height: 22px; }
-input[type=text], input[type=tel], input[type=password], input[type=number] { width: 100%; min-height: 46px; padding: 0 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
+input[type=text], input[type=tel], input[type=password], input[type=number], .field select { width: 100%; min-height: 46px; padding: 0 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
 input.code { text-transform: uppercase; }
 .err { color: var(--bad); min-height: 20px; font-size: 14px; margin-bottom: 6px; }
 
@@ -482,3 +482,7 @@ h3 { font-weight: 600; letter-spacing: .02em; }
 .card.link.reqbar { display: flex; align-items: center; } .card.link.reqbar > svg { flex: none; color: var(--info-fg); }
 
 .err.note-info { color: var(--info-fg); font-weight: 600; }
+
+/* M4: rates and proposed changes */
+h4.mini { margin: 14px 0 4px; font-size: 14px; }
+.note.prop { border: 1px solid var(--warn); background: var(--warn-soft); }

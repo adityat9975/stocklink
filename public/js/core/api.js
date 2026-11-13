@@ -14,6 +14,7 @@ const ER = {
   csrf: 'e_generic', invalid_gstin: 'e_gstin', gstin_required: 'e_gstin_req', gstin_taken: 'e_gstin_taken', invalid_upi_id: 'e_upi',
   too_many_active_codes: 'e_codes', product_unavailable: 'e_unavail', bad_state: 'e_state', cash_not_allowed: 'e_cash', delivery_not_allowed: 'e_delivery',
   supplier_inactive: 'e_supplier_off', plan_inactive: 'e_plan_off', plan_limit: 'e_plan_limit', mfa_required: 'e_mfa', invalid_otp: 'e_otp', plan_has_no_trial: 'e_no_trial', no_plan: 'e_no_plan', plan_not_found: 'e_no_plan',
+  awaiting_buyer: 'e_awaiting', nothing_changed: 'e_nochange', no_proposal: 'e_noprop',
   not_member: 'e_not_member', no_permission: 'e_no_perm', user_not_found: 'e_user_nf', already_member: 'e_already_member', cannot_remove_owner: 'e_rm_owner', too_many_businesses: 'e_many_biz',
 };
 

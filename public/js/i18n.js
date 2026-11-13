@@ -114,7 +114,12 @@ chat_empty: 'No messages yet. Ask about stock, delivery or payment.', chat_ph: '
 q_r1: 'When will my order be ready?', q_r2: 'Can you deliver today?', q_r3: 'Please share new designs', q_r4: 'I have made the payment',
 q_w1: 'Your order is ready, please collect', q_w2: 'Delivery by this evening', q_w3: 'Payment received, thank you', q_w4: 'This item is out. Is another one OK?',
 p_cash_pickup: 'Cash at pickup', pm_cash_pickup: 'Cash at pickup', cash_pickup_note: 'Pay cash at the counter when you collect with your code.', cash_off: 'Cash (not taken)', home_off: 'Delivery (not offered)',
-e_cash: 'This wholesaler does not take cash.', e_delivery: 'This wholesaler does not deliver.', opts_h: 'What retailers can choose', opt_cash: 'Take cash (at pickup or on delivery)', opt_home: 'Offer delivery', on: 'On', off: 'Off'
+e_cash: 'This wholesaler does not take cash.', e_delivery: 'This wholesaler does not deliver.', opts_h: 'What retailers can choose', opt_cash: 'Take cash (at pickup or on delivery)', opt_home: 'Offer delivery', on: 'On', off: 'Off',
+rate_x: 'Rate {r}', rate_pick: 'Rate for this retailer:', rates_h: 'Rates for buyers', rates_d: 'Rate A is the list price ({a}). Set Rate B and C for retailers you put on those rates. Leave empty to use Rate A.', rates_save: 'Save rates', rates_clear: 'Remove B and C',
+sp_h: 'Special price for one retailer', sp_who: 'Retailer', sp_price: 'Price (₹)', sp_ph: 'Empty = remove', sp_save: 'Save special price', sp_need: 'Choose a retailer first.', sp_removed: 'Special price removed.', your_price: 'Your price',
+prop_open: 'Change qty or rate', prop_d: 'Type only what changes. Qty 0 removes an item. The buyer must accept before you go on.', prop_note: 'Note for the buyer (optional)', prop_send: 'Send to buyer', prop_sent: 'Sent. Waiting for the buyer.', item_qty: 'Qty',
+prop_h: 'Changes suggested by the seller', prop_new_total: 'New total', prop_wait: 'Waiting for buyer', prop_ask: 'Accept the new order, or decline to cancel it.', prop_accept: 'Accept changes', prop_decline: 'Decline and cancel', prop_accepted: 'Changes accepted.', prop_declined: 'Declined. The order is cancelled.', btn_close: 'Close',
+e_awaiting: 'Waiting for the buyer to answer the changes.', e_nochange: 'Nothing was changed.', e_noprop: 'These changes were already answered.',
 },
 hi: {
 t_notes: 'Notifications', notes_none: 'Abhi koi notification nahi. Naye order aur stock update yahan dikhenge.', app_h: 'Is phone par app', install: 'App install karein', installed: 'Is phone par install hai.',
@@ -231,6 +236,11 @@ chat_empty: 'Abhi koi message nahi. Stock, delivery ya payment ke baare mein poo
 q_r1: 'Mera order kab tak ready hoga?', q_r2: 'Aaj delivery ho sakti hai?', q_r3: 'Naye designs bhejiye', q_r4: 'Payment kar diya hai',
 q_w1: 'Order ready hai, aa jaiye', q_w2: 'Aaj shaam tak delivery', q_w3: 'Payment mil gaya, dhanyavaad', q_w4: 'Yeh item khatam hai, doosra chalega?',
 p_cash_pickup: 'Pickup par cash', pm_cash_pickup: 'Pickup par cash', cash_pickup_note: 'Code dikhakar maal lete waqt counter par cash dein.', cash_off: 'Cash (nahi lete)', home_off: 'Delivery (nahi dete)',
-e_cash: 'Yeh wholesaler cash nahi lete.', e_delivery: 'Yeh wholesaler delivery nahi dete.', opts_h: 'Retailer kya chun sakte hain', opt_cash: 'Cash lein (pickup ya delivery par)', opt_home: 'Delivery dein', on: 'Chalu', off: 'Band'
+e_cash: 'Yeh wholesaler cash nahi lete.', e_delivery: 'Yeh wholesaler delivery nahi dete.', opts_h: 'Retailer kya chun sakte hain', opt_cash: 'Cash lein (pickup ya delivery par)', opt_home: 'Delivery dein', on: 'Chalu', off: 'Band',
+rate_x: 'Rate {r}', rate_pick: 'Is retailer ka rate:', rates_h: 'Grahak ke rate', rates_d: 'Rate A list price hai ({a}). Jin retailer ko Rate B ya C par rakhein, unke liye yahan bhav daalein. Khaali chhodne par Rate A lagega.', rates_save: 'Rate save karein', rates_clear: 'B aur C hatayein',
+sp_h: 'Ek retailer ke liye khaas bhav', sp_who: 'Retailer', sp_price: 'Bhav (₹)', sp_ph: 'Khaali = hatayein', sp_save: 'Khaas bhav save karein', sp_need: 'Pehle retailer chuniye.', sp_removed: 'Khaas bhav hata diya.', your_price: 'Aapka bhav',
+prop_open: 'Maatra ya rate badlein', prop_d: 'Sirf jo badalna hai woh likhiye. Maatra 0 se item hat jayega. Aage badhne se pehle grahak ko maanna hoga.', prop_note: 'Grahak ke liye note (optional)', prop_send: 'Grahak ko bhejein', prop_sent: 'Bhej diya. Grahak ke jawab ka intezaar.', item_qty: 'Maatra',
+prop_h: 'Seller ke sujhaye badlav', prop_new_total: 'Naya total', prop_wait: 'Grahak ka intezaar', prop_ask: 'Naya order maaniye, ya mana karke cancel kariye.', prop_accept: 'Badlav maanein', prop_decline: 'Mana karein aur cancel', prop_accepted: 'Badlav maan liye.', prop_declined: 'Mana kiya. Order cancel ho gaya.', btn_close: 'Band karein',
+e_awaiting: 'Grahak ke jawab ka intezaar hai.', e_nochange: 'Kuch badla nahi.', e_noprop: 'In badlav ka jawab pehle hi diya ja chuka hai.',
 }
 };

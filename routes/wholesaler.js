@@ -30,7 +30,7 @@ function readPack(unit, b, fallback) {
 }
 
 module.exports = function registerWholesaler(ctx, route) {
-  const { plans, db, q, cancelOrder, now, secret, emit, rupeesToPaise, productOut, orderOut, setStatus, emitStockFor, DAY, notify } = ctx;
+  const { logStock, buyerPricing, plans, db, q, cancelOrder, now, secret, emit, rupeesToPaise, productOut, orderOut, setStatus, emitStockFor, DAY, notify } = ctx;
   /* ----- wholesaler ----- */
   const needApproved = (c) => { if (c.shop.verification !== 'approved') fail(403, 'shop_not_verified'); };
   // Restricted mode (blueprint 6.2): when the plan has expired or is suspended, new products, codes and retailer
@@ -90,12 +90,13 @@ module.exports = function registerWholesaler(ctx, route) {
     return { ok: true, allow_cash: !!cash, allow_home: !!home };
   }, { perm: 'settings' });
   route('GET', '/api/w/retailers', 'wholesaler', async (c) => ({ connections: (await q(`
-    SELECT c.id,c.status,c.source,c.credit_allowed,c.requested_at,c.decided_at,s.name,s.city,
+    SELECT c.id,c.retailer_shop_id,c.tier,c.status,c.source,c.credit_allowed,c.requested_at,c.decided_at,s.name,s.city,
       CASE WHEN c.status='approved' THEN u.phone END phone
     FROM connections c JOIN shops s ON s.id=c.retailer_shop_id JOIN users u ON u.id=s.owner_id
     WHERE c.wholesaler_shop_id=? ORDER BY CASE c.status WHEN 'pending' THEN 0 ELSE 1 END, c.requested_at DESC`).all(c.shop.id)) }));
   route('POST', '/api/w/connections/:id', 'wholesaler', async (c) => {
-    const act = A.oneOf(c.body.action, 'action', ['approve', 'decline', 'revoke', 'block', 'credit']);
+    const act = A.oneOf(c.body.action, 'action', ['approve', 'decline', 'revoke', 'block', 'credit', 'tier']);
+    if (act === 'tier') A.need(c.user, 'catalog'); // a price decision
     if (act === 'approve') await limit(c, 'retailers');
     const result = await tx(db, async () => {
       const cn = (await q('SELECT * FROM connections WHERE id=? AND wholesaler_shop_id=? FOR UPDATE').get(Number(c.params.id), c.shop.id));
@@ -108,6 +109,8 @@ module.exports = function registerWholesaler(ctx, route) {
       else if (act === 'block') status = 'blocked';
       if (act === 'credit') {
         const on = c.body.allowed ? 1 : 0; (await q('UPDATE connections SET credit_allowed=? WHERE id=?').run(on, cn.id)); detail += ' credit=' + on;
+      } else if (act === 'tier') {
+        const tier = A.oneOf(c.body.tier, 'tier', ['A', 'B', 'C']); await q('UPDATE connections SET tier=? WHERE id=?').run(tier, cn.id); detail += ' tier ' + (cn.tier || 'A') + ' -> ' + tier;
       } else (await q('UPDATE connections SET status=?, decided_at=? WHERE id=?').run(status, now(), cn.id));
       await audit(db, { actorId: c.user.id, actorLabel: c.user.name, action: 'connection_' + act, entity: 'connection', entityId: cn.id, detail, ip: c.ip });
       return cn;
@@ -116,6 +119,26 @@ module.exports = function registerWholesaler(ctx, route) {
     if (act === 'approve') notify.shop(result.retailer_shop_id, 'conn_approved', { shop: c.shop.name }, 'catalog');
     return { ok: true };
   }, { perm: 'network' });
+  // Special price for one retailer on one product (blueprint 7.4). price null/'' removes it.
+  route('GET', '/api/w/products/:id/buyer-prices', 'wholesaler', async (c) => {
+    const p = await q('SELECT id FROM products WHERE id=? AND shop_id=?').get(Number(c.params.id), c.shop.id); if (!p) fail(404, 'not_found');
+    return { prices: await q('SELECT bp.retailer_shop_id, s.name, bp.price_paise FROM buyer_prices bp JOIN shops s ON s.id = bp.retailer_shop_id WHERE bp.product_id=? ORDER BY s.name').all(p.id) };
+  });
+  route('POST', '/api/w/products/:id/buyer-price', 'wholesaler', async (c) => {
+    const p = await q('SELECT id, name FROM products WHERE id=? AND shop_id=?').get(Number(c.params.id), c.shop.id); if (!p) fail(404, 'not_found');
+    const rid = A.int(c.body.retailer_shop_id, 'retailer_shop_id', 1, 1e12);
+    if (!(await q("SELECT 1 FROM connections WHERE wholesaler_shop_id=? AND retailer_shop_id=? AND status='approved'").get(c.shop.id, rid))) fail(404, 'not_connected');
+    const off = c.body.price === null || c.body.price === '' || c.body.price === undefined;
+    if (off) await q('DELETE FROM buyer_prices WHERE product_id=? AND retailer_shop_id=?').run(p.id, rid);
+    else {
+      const price = rupeesToPaise(c.body.price);
+      await q('DELETE FROM buyer_prices WHERE product_id=? AND retailer_shop_id=?').run(p.id, rid);
+      await q('INSERT INTO buyer_prices(product_id,retailer_shop_id,price_paise,created_at) VALUES(?,?,?,?)').run(p.id, rid, price, now());
+    }
+    await audit(db, { actorId: c.user.id, actorLabel: c.user.name, action: 'buyer_price_' + (off ? 'removed' : 'set'), entity: 'product', entityId: p.id, detail: `retailer ${rid}${off ? '' : ' ' + c.body.price}`, ip: c.ip });
+    emit({ kind: 'catalog', wid: c.shop.id, scope: 'catalog', data: { product_id: p.id } });
+    return { ok: true };
+  }, { perm: 'catalog' });
   route('GET', '/api/w/invites', 'wholesaler', async (c) => ({ invites: (await q('SELECT id,hint,max_uses,uses,expires_at,auto_approve,revoked_at,created_at FROM invite_codes WHERE shop_id=? ORDER BY id DESC LIMIT 20').all(c.shop.id))
     .map(i => ({ ...i, auto_approve: !!i.auto_approve, active: !i.revoked_at && i.expires_at > now() && i.uses < i.max_uses })) }));
   route('POST', '/api/w/invites', 'wholesaler', async (c) => {
@@ -161,6 +184,7 @@ module.exports = function registerWholesaler(ctx, route) {
       const pid = Number((await q('INSERT INTO products(shop_id,name,spec,price_paise,unit,pack_qty,pack_detail,moq,on_hand,is_new,stock_verified_at,created_at,category) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)')
         .run(c.shop.id, name, spec, price, unit, packQty, detail, moq, stock, 1, now(), now(), category)).lastInsertRowid);
       await savePhotos(pid, photos);
+      if (stock > 0) await logStock(pid, stock, 'opening', { actorId: c.user.id });
       await audit(db, { actorId: c.user.id, actorLabel: c.user.name, action: 'product_created', entity: 'product', entityId: pid, detail: name + ' stock ' + stock, ip: c.ip });
       return pid;
     });
@@ -180,6 +204,7 @@ module.exports = function registerWholesaler(ctx, route) {
       if (next < p.reserved) fail(409, 'below_reserved', { reserved: p.reserved });
       if (next > 10000000) fail(400, 'invalid_stock');
       await q('UPDATE products SET on_hand=?, stock_verified_at=? WHERE id=?').run(next, now(), p.id);
+      if (next !== p.on_hand) await logStock(p.id, next - p.on_hand, c.body.set !== undefined ? 'set' : 'adjust', { actorId: c.user.id, note: c.body.reason ? String(c.body.reason).slice(0, 100) : null });
       await audit(db, { actorId: c.user.id, actorLabel: c.user.name, action: 'stock_adjusted', entity: 'product', entityId: p.id, detail: `${p.name}: ${p.on_hand} -> ${next}${c.body.reason ? ' (' + String(c.body.reason).slice(0, 40) + ')' : ''}`, ip: c.ip });
       return (await q('SELECT * FROM products WHERE id=?').get(p.id));
     });
@@ -209,7 +234,9 @@ module.exports = function registerWholesaler(ctx, route) {
     const unit = b.unit !== undefined ? A.oneOf(b.unit, 'unit', UNITS) : p.unit;
     const { packQty, detail } = readPack(unit, b, { packQty: p.pack_qty || 1, detail: p.pack_detail || '' });
     const category = b.category !== undefined ? A.str(b.category, 'category', 0, 30).trim() : (p.category || '');
-    await q('UPDATE products SET name=?,spec=?,price_paise=?,unit=?,pack_qty=?,pack_detail=?,category=? WHERE id=?').run(name, spec, price, unit, packQty, detail, category, p.id);
+    const tierPrice = (v, old) => (v === undefined ? old ?? null : v === null || v === '' ? null : rupeesToPaise(v));
+    const priceB = tierPrice(b.price_b, p.price_b_paise), priceC = tierPrice(b.price_c, p.price_c_paise);
+    await q('UPDATE products SET name=?,spec=?,price_paise=?,unit=?,pack_qty=?,pack_detail=?,category=?,price_b_paise=?,price_c_paise=? WHERE id=?').run(name, spec, price, unit, packQty, detail, category, priceB, priceC, p.id);
     await audit(db, { actorId: c.user.id, actorLabel: c.user.name, action: 'product_updated', entity: 'product', entityId: p.id, detail: `price ${p.price_paise} -> ${price}`, ip: c.ip });
     emit({ kind: 'catalog', wid: c.shop.id, scope: 'catalog', data: { product_id: p.id } });
     return { ok: true };
@@ -234,12 +261,14 @@ module.exports = function registerWholesaler(ctx, route) {
       if (!o) fail(404, 'not_found');
       const i = FLOW.indexOf(o.status);
       if (i < 0 || i >= FLOW.length - 1) fail(409, 'bad_state');
+      if ((await q("SELECT 1 FROM order_proposals WHERE order_id=? AND status='pending'").get(o.id))) fail(409, 'awaiting_buyer');
       const next = FLOW[i + 1];
       if (next === 'paid' && o.payment_mode === 'upi' && !o.utr) fail(409, 'payment_reference_missing');
       if (next === 'dispatched') {
         for (const it of (await q('SELECT product_id,qty FROM order_items WHERE order_id=?').all(o.id))) {
           const r = (await q('UPDATE products SET on_hand=on_hand-?, reserved=reserved-? WHERE id=? AND reserved>=? AND on_hand>=?').run(it.qty, it.qty, it.product_id, it.qty, it.qty));
           if (r.changes !== 1) fail(409, 'stock_mismatch');
+          await logStock(it.product_id, -it.qty, 'sale', { orderId: o.id, actorId: c.user.id, note: o.no });
         }
       }
       if (next === 'completed' && o.fulfilment === 'pickup' && !A.safeEqual(String(c.body.pickup_code || '').toUpperCase(), o.pickup_code)) fail(403, 'wrong_pickup_code');
@@ -249,6 +278,30 @@ module.exports = function registerWholesaler(ctx, route) {
     });
     await emitStockFor(o.id); emit({ kind: 'order', wid: o.wholesaler_shop_id, rid: o.retailer_shop_id, data: { order_id: o.id, status: o.status } });
     notify.shop(o.retailer_shop_id, 'order_status', { no: o.no, shop: c.shop.name, status: o.status === 'dispatched' && o.fulfilment === 'pickup' ? 'ready' : o.status }, 'orders');
+    return await orderOut(o, 'wholesaler');
+  }, { perm: 'orders' });
+  // Seller proposes new quantities or prices before confirming (blueprint 10.1 "Modification requested").
+  // The order cannot move on until the buyer accepts; declining cancels it and releases the held stock.
+  route('POST', '/api/w/orders/:id/propose', 'wholesaler', async (c) => {
+    const o = await q("SELECT * FROM orders WHERE id=? AND wholesaler_shop_id=?").get(Number(c.params.id), c.shop.id); if (!o) fail(404, 'not_found');
+    if (o.status !== 'received') fail(409, 'bad_state');
+    if ((await q("SELECT 1 FROM order_proposals WHERE order_id=? AND status='pending'").get(o.id))) fail(409, 'awaiting_buyer');
+    const cur = await q('SELECT product_id, qty, unit_price_paise FROM order_items WHERE order_id=?').all(o.id);
+    if (!Array.isArray(c.body.lines) || !c.body.lines.length || c.body.lines.length > 20) fail(400, 'invalid_items');
+    const lines = c.body.lines.map((l) => {
+      const pid = A.int(l && l.product_id, 'product_id', 1, 1e12), now0 = cur.find((x) => Number(x.product_id) === pid);
+      if (!now0) fail(400, 'invalid_items');
+      return { product_id: pid, qty: A.int(l.qty, 'qty', 0, 100000), unit_price_paise: l.price === undefined ? Number(now0.unit_price_paise) : rupeesToPaise(l.price) };
+    });
+    const changed = lines.some((l) => { const x = cur.find((y) => Number(y.product_id) === l.product_id); return x.qty !== l.qty || Number(x.unit_price_paise) !== l.unit_price_paise; });
+    if (!changed) fail(400, 'nothing_changed');
+    if (!lines.some((l) => l.qty > 0)) fail(400, 'invalid_items');
+    const note = c.body.note ? A.str(c.body.note, 'note', 0, 300) : null;
+    await q("INSERT INTO order_proposals(order_id,lines,note,status,created_by,created_at) VALUES(?,?,?,'pending',?,?)").run(o.id, JSON.stringify(lines), note, c.user.id, now());
+    await q('INSERT INTO order_history(order_id,status,actor_user_id,note,ts) VALUES(?,?,?,?,?)').run(o.id, 'received', c.user.id, 'changes proposed', now());
+    await audit(db, { actorId: c.user.id, actorLabel: c.user.name, action: 'order_changes_proposed', entity: 'order', entityId: o.id, detail: o.no, ip: c.ip });
+    emit({ kind: 'order', wid: o.wholesaler_shop_id, rid: o.retailer_shop_id, data: { order_id: o.id } });
+    notify.shop(o.retailer_shop_id, 'order_proposal', { no: o.no, shop: c.shop.name }, 'orders');
     return await orderOut(o, 'wholesaler');
   }, { perm: 'orders' });
   route('POST', '/api/w/orders/:id/cancel', 'wholesaler', async (c) => {
