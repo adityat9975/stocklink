@@ -31,7 +31,15 @@ jobs:
       - uses: actions/setup-java@v4
         with: { distribution: temurin, java-version: '17' }
 
-      - uses: android-actions/setup-android@v3
+      # GitHub's Ubuntu machines already include the Android SDK, so no download step is needed
+      # (the old setup-android download step failed while fetching updates).
+      - name: Use the Android SDK already on the runner
+        run: |
+          SDK="${ANDROID_SDK_ROOT:-$ANDROID_HOME}"
+          if [ -z "$SDK" ] || [ ! -d "$SDK" ]; then echo "::error::No Android SDK found on this runner"; exit 1; fi
+          echo "ANDROID_HOME=$SDK" >> "$GITHUB_ENV"; echo "ANDROID_SDK_ROOT=$SDK" >> "$GITHUB_ENV"
+          echo "sdk.dir=$SDK" > android/local.properties
+          echo "Android SDK: $SDK"; ls "$SDK/platforms" || true
 
       - uses: gradle/actions/setup-gradle@v4
         with: { gradle-version: '8.9' }
