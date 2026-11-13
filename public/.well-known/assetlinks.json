@@ -1,0 +1,4 @@
+[{
+  "relation": ["delegate_permission/common.handle_all_urls"],
+  "target": { "namespace": "android_app", "package_name": "com.stocklink.app", "sha256_cert_fingerprints": ["F7:54:DE:F4:AC:60:45:FF:6F:81:FA:50:29:28:2A:AF:84:93:23:31:21:41:44:BC:42:1F:58:ED:A1:0D:1E:55"] }
+}]

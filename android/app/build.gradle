@@ -1,0 +1,44 @@
+// StockLink Android app: a Trusted Web Activity that opens the StockLink website full screen.
+// The address comes from APP_URL (GitHub repository variable), e.g. https://stocklink-xxxx.onrender.com
+plugins { id 'com.android.application' }
+
+def appUrl = (System.getenv('APP_URL') ?: 'https://example.com').trim().replaceAll('/+$', '')
+def appHost = new URI(appUrl).host
+def buildNo = (System.getenv('GITHUB_RUN_NUMBER') ?: '1') as Integer
+
+android {
+    namespace 'com.stocklink.app'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId 'com.stocklink.app'
+        minSdk 21
+        targetSdk 34
+        versionCode buildNo
+        versionName "1.0.${buildNo}"
+        manifestPlaceholders = [hostName: appHost, launchUrl: appUrl + '/?source=app']
+        resValue 'string', 'appName', 'StockLink'
+        resValue 'string', 'asset_statements', '[{"relation": ["delegate_permission/common.handle_all_urls"], "target": {"namespace": "web", "site": "' + appUrl + '"}}]'
+    }
+
+    signingConfigs {
+        release {
+            storeFile file(System.getenv('KEYSTORE_PATH') ?: 'release.keystore')
+            storePassword System.getenv('KEYSTORE_PASSWORD') ?: ''
+            keyAlias 'stocklink'
+            keyPassword System.getenv('KEYSTORE_PASSWORD') ?: ''
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            signingConfig signingConfigs.release
+        }
+    }
+    compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
+}
+
+dependencies {
+    implementation 'com.google.androidbrowserhelper:androidbrowserhelper:2.5.0'
+}

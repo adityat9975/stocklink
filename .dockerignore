@@ -1,0 +1,13 @@
+node_modules
+data
+lib/data
+*.db*
+secret.key
+.env
+.env.local
+launch_marketing
+test
+.git
+android
+android-signing
+.github
