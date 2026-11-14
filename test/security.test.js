@@ -291,6 +291,42 @@ const sec = (n) => console.log('\n' + n);
     A.resetLimits();
   }
 
+  sec('0h. Delete my account');
+  {
+    A.resetLimits();
+    const q = app.db.q, PH = '9555500001', PWD = 'Passw0rd!del';
+    const jar = {};
+    const su = await call('POST', '/api/signup', { jar, body: { role: 'retailer', name: 'Del Tester', phone: PH, password: PWD, shop_name: 'Del Shop', city: 'Pune' } });
+    ok(su.s === 200, 'test retailer signs up');
+    const rid = Number((await q("SELECT s.id FROM shops s JOIN users u ON u.id=s.owner_id WHERE u.phone=?").get(PH)).id);
+    await q("INSERT INTO connections(wholesaler_shop_id,retailer_shop_id,status,source,requested_at,decided_at) VALUES(?,?,'approved','request',?,?)").run(WID, rid, Date.now(), Date.now());
+    const p = await q("SELECT id, moq FROM products WHERE shop_id=? AND status='active' AND on_hand-reserved>=moq ORDER BY id LIMIT 1").get(WID);
+    const o = await call('POST', '/api/r/orders', { jar, body: { shop_id: WID, items: [{ product_id: p.id, qty: p.moq }], fulfilment: 'pickup', payment_mode: 'cod', idem_key: 'del-' + Date.now() } });
+    ok(o.s === 200, 'test retailer places an order');
+    const blocked = await call('POST', '/api/me/delete', { jar, body: { password: PWD, confirm: 'DELETE' } });
+    ok(blocked.s === 409 && blocked.j.error === 'open_orders' && blocked.j.n === 1, 'cannot delete while an order is open');
+    await call('POST', '/api/r/orders/' + o.j.id + '/cancel', { jar, body: {} });
+    ok((await call('POST', '/api/me/delete', { jar, body: { password: PWD } })).j.error === 'confirm_required', 'must type DELETE');
+    ok((await call('POST', '/api/me/delete', { jar, body: { password: 'wrong-one-123', confirm: 'DELETE' } })).j.error === 'wrong_password', 'wrong password refused');
+    ok((await call('POST', '/api/me/delete', { jar: admin, body: { password: PW, confirm: 'DELETE' } })).s === 403, 'Super Admin cannot delete itself this way');
+    const del = await call('POST', '/api/me/delete', { jar, body: { password: PWD, confirm: 'delete' } });
+    ok(del.s === 200, 'account deleted with password + DELETE');
+    ok((await call('GET', '/api/me', { jar })).s === 401, 'old session stops working at once');
+    A.resetLimits();
+    ok((await call('POST', '/api/login', { body: { phone: PH, password: PWD } })).s === 401, 'cannot log in after deletion');
+    const u = await q("SELECT name, phone, deleted_at FROM users WHERE id=(SELECT owner_id FROM shops WHERE id=?)").get(rid);
+    ok(u.name === 'Deleted user' && u.phone !== PH && !!u.deleted_at, 'name and phone removed from the user record');
+    ok((await q('SELECT status FROM connections WHERE wholesaler_shop_id=? AND retailer_shop_id=?').get(WID, rid)).status === 'revoked', 'connections ended');
+    ok(Number((await q('SELECT COUNT(*) n FROM orders WHERE retailer_shop_id=?').get(rid)).n) === 1, 'past orders kept for the other shop');
+    ok((await call('GET', '/api/w/orders', { jar: sharma })).j.orders.some((x) => x.id === o.j.id), 'wholesaler still sees the old order');
+    ok(Number((await q("SELECT COUNT(*) n FROM audit_logs WHERE action='account_deleted'").get()).n) >= 1, 'deletion is in the audit log');
+    const shopRow = await q('SELECT id FROM shops WHERE id=?').get(rid);
+    ok((await call('POST', '/api/admin/shops/' + shopRow.id + '/verify', { jar: admin, body: { action: 'reinstate' } })).j.error === 'account_deleted', 'admin cannot reopen a deleted account\'s shop');
+    A.resetLimits();
+    ok((await call('POST', '/api/signup', { body: { role: 'retailer', name: 'Back Again', phone: PH, password: PWD, shop_name: 'New Del Shop', city: 'Pune' } })).s === 200, 'same phone can sign up again later');
+    A.resetLimits();
+  }
+
   sec('0. Chat and payment options');
   {
     const RID = (await app.db.q("SELECT s.id FROM shops s JOIN users u ON u.id=s.owner_id WHERE u.phone='9000000004'").get()).id;

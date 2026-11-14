@@ -3,7 +3,7 @@ import { S, app, can } from '../core/state.js';
 import { t } from '../core/format.js';
 import { api, toast, errText } from '../core/api.js';
 import { closeStream } from '../core/live.js';
-import { field, btn, seg, unitName } from './components.js';
+import { field, btn, seg, unitName, pwfield } from './components.js';
 import { logout, enter } from '../core/session.js';
 import { dev, pushBlocker, enablePush, disablePush, promptInstall } from '../core/device.js';
 import { notesSheetBody } from '../features/notes.js';
@@ -84,7 +84,17 @@ function menuSheet() {
     ${can('settings') ? upi : ''}
     ${team}
     ${appGroup()}
+    ${m.role === 'admin' ? '' : deleteGroup()}
     <div class="row wrap">${btn(t('help'), 'tutorial')}${btn(t('logout'), 'logout', '', 'ghost danger')}${btn(t('close'), 'closemodal', '', 'pri')}</div>`);
+}
+
+// Delete my account: password + typing DELETE, with what happens spelled out first.
+function deleteGroup() {
+  return html`<details class="more danger-zone" ${S.open.delacct ? 'open' : ''}><summary>${t('del_h')}</summary>
+    <p class="sub">${t('del_d1')}</p><p class="sub">${t('del_d2')}</p><p class="sub"><b>${t('del_d3')}</b></p>
+    ${pwfield('del_pw', t('del_pw'), { autocomplete: 'current-password', maxlength: 128 })}
+    ${field('del_confirm', t('del_type'), { maxlength: 10, autocomplete: 'off', autocapitalize: 'characters', placeholder: 'DELETE' })}
+    ${btn(t('del_btn'), 'delacct', '', 'danger', { disabled: S.busy })}</details>`;
 }
 
 function gallerySheet(m) {
@@ -172,6 +182,17 @@ export const modalActions = {
     window.open('https://wa.me/?text=' + encodeURIComponent(msg), '_blank', 'noopener');
   },
   logout,
+  delacct: async () => {
+    const f = S.form;
+    if (!f.del_pw || String(f.del_confirm || '').trim().toUpperCase() !== 'DELETE') return toast(t('del_need'), 'warn');
+    try {
+      await api('POST', '/api/me/delete', { password: f.del_pw, confirm: f.del_confirm });
+    } catch (e) { return toast(errText(e), 'bad'); }
+    try { await disablePush(); } catch (_) { /* phone alerts already off */ }
+    closeStream();
+    S.me = null; S.form = {}; S.modal = null; S.open = {};
+    toast(t('del_done'), 'ok'); app.render();
+  },
   install: async () => { if (await promptInstall()) toast(t('installed'), 'ok'); app.render(); },
   pushon: async () => {
     let why;

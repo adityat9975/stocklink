@@ -15,7 +15,7 @@ module.exports = function registerAdmin(ctx, route) {
     orders: (await q('SELECT status,COUNT(*) n, COALESCE(SUM(subtotal_paise),0) paise FROM orders GROUP BY status').all()) }));
   route('GET', '/api/admin/shops', 'admin', async (c) => {
     const st = c.query.get('status');
-    const rows = (await q(`SELECT s.id,s.type,s.name,s.city,s.gstin,s.verification,s.reject_reason,s.created_at,u.name owner,u.phone,u.status user_status
+    const rows = (await q(`SELECT s.id,s.type,s.name,s.city,s.gstin,s.verification,s.reject_reason,s.created_at,u.name owner,u.phone,u.status user_status,u.deleted_at
       FROM shops s JOIN users u ON u.id=s.owner_id ${st ? 'WHERE s.verification=?' : ''} ORDER BY s.id DESC LIMIT 200`).all(...(st ? [st] : [])));
     return { shops: rows.map(r => ({ ...r, gstin_state: GST.stateOf(r.gstin), gstin_valid: r.gstin ? GST.validate(r.gstin).ok : null })) };
   });
@@ -26,6 +26,7 @@ module.exports = function registerAdmin(ctx, route) {
     const shop = await tx(db, async () => {
       const s = (await q('SELECT * FROM shops WHERE id=?').get(Number(c.params.id)));
       if (!s) fail(404, 'not_found');
+      if (map[act] === 'approved' && (await q('SELECT deleted_at FROM users WHERE id=?').get(s.owner_id)).deleted_at) fail(409, 'account_deleted');
       await q('UPDATE shops SET verification=?, reject_reason=? WHERE id=?').run(map[act], reason, s.id);
       await audit(db, { actorId: c.user.id, actorLabel: c.user.name, action: 'shop_' + act, entity: 'shop', entityId: s.id, detail: s.name + (reason ? ' / ' + reason : ''), ip: c.ip });
       return s;

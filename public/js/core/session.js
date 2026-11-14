@@ -18,6 +18,10 @@ export async function enter(m, quiet) {
   // deep link from a tapped phone notification: /?tab=orders
   const tab = new URLSearchParams(location.search).get('tab');
   if (tab) { history.replaceState(null, '', '/'); if (S.me.tutorial_done) openTab(tab); }
+  // from the public /delete-account page: open the menu at the delete section
+  if (new URLSearchParams(location.search).get('delete') === '1' && S.me.role !== 'admin') {
+    history.replaceState(null, '', '/'); S.open.delacct = true; S.modal = { type: 'menu' }; app.render();
+  }
 }
 
 export async function boot() {

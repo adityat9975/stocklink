@@ -486,3 +486,8 @@ h3 { font-weight: 600; letter-spacing: .02em; }
 /* M4: rates and proposed changes */
 h4.mini { margin: 14px 0 4px; font-size: 14px; }
 .note.prop { border: 1px solid var(--warn); background: var(--warn-soft); }
+
+/* Delete account */
+.danger-zone { margin-top: 14px; border-top: 1px solid var(--line); padding-top: 6px; }
+.danger-zone summary { color: var(--bad); }
+.danger-zone .btn.danger { margin-top: 10px; }

@@ -1,6 +1,6 @@
 /* StockLink service worker: makes the app installable, opens offline, and shows phone notifications.
    Private data (/api/*) is never cached. App files use network-first, so updates show up immediately when online. */
-const CACHE = 'stocklink-shell-v5';
+const CACHE = 'stocklink-shell-v6';
 const SHELL = ['/', '/style.css', '/manifest.webmanifest', '/favicon.svg', '/icons/icon-192.png', '/icons/badge-96.png',
   '/js/main.js', '/js/i18n.js', '/js/core/api.js', '/js/core/busy.js', '/js/core/data.js', '/js/core/format.js', '/js/core/html.js',
   '/js/core/live.js', '/js/core/render.js', '/js/core/session.js', '/js/core/state.js', '/js/core/device.js', '/js/ui/components.js',

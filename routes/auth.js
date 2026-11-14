@@ -7,7 +7,7 @@ const { tx, audit } = require('../lib/db');
 const { fail } = require('../lib/auth');
 
 module.exports = function registerAuth(ctx, route) {
-  const { db, q, now, cfg, isUnique, phoneOf, startSession } = ctx;
+  const { db, q, now, cfg, isUnique, phoneOf, startSession, emit } = ctx;
   route('GET', '/api/config', null, async () => ({ demo: cfg.demo, currency: cfg.currency,
     accounts: cfg.demo ? [
       { role: 'retailer', label: 'Retailer (connected)', phone: '9000000004' }, { role: 'wholesaler', label: 'Wholesaler (verified)', phone: '9000000002' },
@@ -152,6 +152,45 @@ module.exports = function registerAuth(ctx, route) {
     await q('DELETE FROM memberships WHERE user_id=? AND shop_id=?').run(uid, c.shop.id);
     await q('UPDATE sessions SET active_shop_id=NULL WHERE user_id=? AND active_shop_id=?').run(uid, c.shop.id);
     await audit(db, { actorId: c.user.id, actorLabel: c.user.name, action: 'member_removed', entity: 'shop', entityId: c.shop.id, detail: 'user ' + uid, ip: c.ip });
+    return { ok: true };
+  });
+  // Delete my account (Play Store policy + blueprint privacy rules). Orders stay as business records for the other side,
+  // but the person's name, phone and login are removed and every shop they own is closed. Cannot be undone.
+  route('POST', '/api/me/delete', 'any', async (c) => {
+    if (c.user.role === 'admin') fail(403, 'admin_cannot_delete');
+    if (!A.hit('delete:' + c.user.id, 5, 600000)) fail(429, 'rate_limited');
+    if (String(c.body.confirm || '').trim().toUpperCase() !== 'DELETE') fail(400, 'confirm_required');
+    const u0 = await q('SELECT * FROM users WHERE id=?').get(c.user.id);
+    if (!(await A.verifyPassword(typeof c.body.password === 'string' ? c.body.password.slice(0, 128) : '', u0.pass_hash))) fail(401, 'wrong_password');
+    const owned = (await q('SELECT id, type, name FROM shops WHERE owner_id=?').all(u0.id)).map((s) => ({ ...s, id: Number(s.id) }));
+    const ids = owned.map((s) => s.id);
+    if (ids.length) {
+      const ph = ids.map(() => '?').join(',');
+      const open = Number((await q(`SELECT COUNT(*) n FROM orders WHERE status IN ('received','paid','packed','dispatched') AND (wholesaler_shop_id IN (${ph}) OR retailer_shop_id IN (${ph}))`).get(...ids, ...ids)).n);
+      if (open > 0) fail(409, 'open_orders', { n: open });
+    }
+    const t = now();
+    await tx(db, async () => {
+      for (const s of owned) {
+        await q("UPDATE shops SET verification='suspended', reject_reason='Account deleted', upi_id=NULL WHERE id=?").run(s.id);
+        await q("UPDATE connections SET status='revoked', decided_at=? WHERE (wholesaler_shop_id=? OR retailer_shop_id=?) AND status IN ('pending','approved')").run(t, s.id, s.id);
+        if (s.type === 'wholesaler') {
+          await q("UPDATE products SET status='archived' WHERE shop_id=?").run(s.id);
+          await q('UPDATE invite_codes SET revoked_at=? WHERE shop_id=? AND revoked_at IS NULL').run(t, s.id);
+        }
+        await q('DELETE FROM memberships WHERE shop_id=?').run(s.id);
+      }
+      await q('DELETE FROM memberships WHERE user_id=?').run(u0.id);
+      await q('DELETE FROM sessions WHERE user_id=?').run(u0.id);
+      await q('DELETE FROM push_subs WHERE user_id=?').run(u0.id);
+      await q('DELETE FROM notifications WHERE user_id=?').run(u0.id);
+      // The phone number is freed so the person can sign up again later; the old login can never work again.
+      await q("UPDATE users SET name='Deleted user', phone=?, pass_hash=?, status='suspended', deleted_at=?, totp_secret=NULL, totp_on=0 WHERE id=?")
+        .run('deleted-' + u0.id + '-' + A.newToken().slice(0, 8), await A.hashPassword(A.newToken()), t, u0.id);
+      await audit(db, { actorId: u0.id, actorLabel: 'Deleted user #' + u0.id, action: 'account_deleted', entity: 'user', entityId: u0.id, detail: owned.length + ' shop(s) closed', ip: c.ip });
+    });
+    for (const s of owned) emit({ kind: 'catalog', wid: s.id, scope: 'catalog', data: {} });
+    c.res.setHeader('Set-Cookie', `sl_sid=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${cfg.prod ? '; Secure' : ''}`);
     return { ok: true };
   });
   route('POST', '/api/me/prefs', 'any', async (c) => {
